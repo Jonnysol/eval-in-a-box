@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Prism — Eval in a Box</title>
+<style>
+  :root { --ink:#1d1d1f; --gray:#6e6e73; --faint:#d2d2d7; --paper:#f5f5f7; --card:#fff; --blue:#0071e3; }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { height: 100%; }
+  body { background: var(--paper); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Helvetica Neue", Arial, sans-serif; -webkit-font-smoothing: antialiased; overflow: hidden; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  .app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; padding: 22px 36px 20px; gap: 14px; }
+
+  header { display: flex; align-items: center; gap: 16px; }
+  header img { height: 22px; }
+  header .sp { flex: 1; }
+  .pill { height: 34px; padding: 0 16px; border-radius: 999px; font-size: 14px; font-weight: 500; background: var(--card); box-shadow: 0 0 0 1px rgba(0,0,0,.08); display: inline-flex; align-items: center; gap: 8px; text-decoration: none; color: var(--ink); }
+  .pill:hover { box-shadow: 0 0 0 1px rgba(0,0,0,.2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #30d158; }
+  .count { font-size: 14px; color: var(--gray); font-variant-numeric: tabular-nums; min-width: 52px; text-align: right; }
+
+  main { min-height: 0; position: relative; }
+  .slide { position: absolute; inset: 0; display: grid; grid-template-rows: auto 1fr; gap: 16px; opacity: 0; pointer-events: none; transform: translateX(24px); transition: opacity .35s ease, transform .35s ease; }
+  .slide.on { opacity: 1; pointer-events: auto; transform: none; }
+  .slide.left { transform: translateX(-24px); }
+  .head { display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap; }
+  .num { font-size: 15px; font-weight: 600; color: var(--gray); font-variant-numeric: tabular-nums; }
+  h1 { font-size: clamp(30px, 3.3vw, 46px); font-weight: 600; letter-spacing: -0.022em; line-height: 1.08; }
+  .line { font-size: clamp(16px, 1.45vw, 21px); color: var(--gray); }
+
+  .stage { min-height: 0; display: flex; gap: 16px; justify-content: center; align-items: stretch; }
+  .clip { position: relative; flex: 1 1 0; min-width: 0; min-height: 0; border-radius: 22px; overflow: hidden; background: #e3e3e8; box-shadow: 0 18px 50px -22px rgba(0,0,0,.45); cursor: pointer; transition: flex-grow .35s ease; }
+  .clip.active { flex: 0 0 auto; align-self: center; height: 100%; aspect-ratio: var(--ar, 16 / 9); max-width: 100%; }
+  .stage.two .clip.active { max-width: 74%; }
+  .clip.active.fit { height: auto; max-width: none; aspect-ratio: auto; }
+  .clip video, .clip .media { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .clip.active video, .clip.active .media { object-fit: contain; }
+
+  /* three or more: the active one large, the rest in a rail */
+  .stage.multi { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 21%); gap: 12px; }
+  .stage.multi .clip { grid-column: 2; border-radius: 16px; box-shadow: 0 10px 30px -18px rgba(0,0,0,.45); }
+  .stage.multi .clip.active { grid-column: 1; grid-row: 1 / -1; justify-self: center; align-self: center; border-radius: 22px; box-shadow: 0 18px 50px -22px rgba(0,0,0,.45); }
+  .stage.multi .clip:not(.active) .tag { left: 8px; top: 8px; padding: 4px 9px; font-size: 11px; }
+  .stage.multi .clip:not(.active) .play span { width: 40px; height: 40px; }
+  .stage.multi .clip:not(.active) .play svg { width: 15px; height: 15px; margin-left: 3px; }
+
+  .tag { position: absolute; left: 14px; top: 14px; padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; background: rgba(255,255,255,.92); color: var(--ink); pointer-events: none; }
+  .tag.sim { background: rgba(29,29,31,.82); color: #fff; }
+  .tag.unit { background: var(--blue); color: #fff; }
+  .play { position: absolute; inset: 0; display: grid; place-items: center; background: linear-gradient(transparent 55%, rgba(0,0,0,.28)); transition: opacity .2s; }
+  .play span { width: 74px; height: 74px; border-radius: 50%; background: rgba(255,255,255,.94); display: grid; place-items: center; box-shadow: 0 8px 30px rgba(0,0,0,.3); }
+  .play svg { margin-left: 5px; }
+  .clip.playing .play { opacity: 0; }
+  .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: rgba(255,255,255,.25); }
+  .bar i { display: block; height: 100%; width: 0; background: #fff; }
+  .expand { position: absolute; right: 12px; top: 12px; width: 34px; height: 34px; border-radius: 50%; background: rgba(255,255,255,.92); display: grid; place-items: center; opacity: 0; transition: opacity .2s; }
+  .clip:hover .expand { opacity: 1; }
+  .stage.multi .clip:not(.active) .expand { display: none; }
+
+  footer { display: flex; align-items: center; gap: 18px; }
+  .loop { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; letter-spacing: .06em; color: #a1a1a6; }
+  .loop b { font-weight: 600; padding: 6px 12px; border-radius: 999px; transition: all .3s; }
+  .loop b.on { background: var(--ink); color: #fff; }
+  .loop i { font-style: normal; color: var(--faint); }
+  .dots { margin-left: auto; display: flex; gap: 7px; }
+  .dots button { width: 26px; height: 5px; border-radius: 3px; background: var(--faint); transition: background .3s; }
+  .dots button.on { background: var(--ink); }
+  .nav { display: flex; gap: 8px; }
+  .nav button { width: 38px; height: 38px; border-radius: 50%; background: var(--card); box-shadow: 0 0 0 1px rgba(0,0,0,.08); display: grid; place-items: center; }
+  .nav button:disabled { opacity: .35; cursor: default; }
+
+  .gallery { position: fixed; inset: 0; background: rgba(245,245,247,.97); z-index: 20; padding: 28px 36px; overflow: auto; display: none; }
+  .gallery.on { display: block; }
+  .gallery h2 { font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
+  .gallery h3 { font-size: 15px; font-weight: 600; color: var(--gray); margin: 26px 0 12px; }
+  .ghead { display: flex; align-items: center; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 16px; }
+  .card { position: relative; border-radius: 16px; overflow: hidden; background: var(--card); box-shadow: 0 0 0 1px rgba(0,0,0,.07); text-align: left; }
+  .card img { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; background: #000; }
+  .card div { padding: 10px 14px 12px; font-size: 14px; font-weight: 600; }
+  .card small { display: block; font-weight: 400; color: var(--gray); margin-top: 2px; }
+  .card .vb { position: absolute; right: 10px; top: 10px; width: 30px; height: 30px; border-radius: 50%; background: rgba(255,255,255,.92); display: grid; place-items: center; }
+  .card .vb svg { margin-left: 2px; }
+
+  header .plogo { height: 15px; width: 15px; }
+  .clicky { position: fixed; inset: 0; background: var(--paper); z-index: 25; padding: 28px 36px; display: none; grid-template-rows: auto 1fr; gap: 18px; }
+  .clicky.on { display: grid; }
+  .clicky .ghead { gap: 10px; }
+  .clicky .ghead img { width: 30px; height: 30px; }
+  .cwrap { min-height: 0; display: grid; place-items: center; }
+  .cwrap video { width: min(100%, calc((100vh - 150px) * 1.777)); aspect-ratio: 1276 / 718; height: auto; border-radius: 22px; background: #000; box-shadow: 0 18px 50px -22px rgba(0,0,0,.45); display: block; }
+  .light { position: fixed; inset: 0; background: #000; z-index: 30; display: none; }
+  .light.on { display: block; }
+  .light video, .light img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .light [hidden] { display: none; }
+  .light button { position: absolute; right: 20px; top: 20px; width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,.9); display: grid; place-items: center; }
+
+  @media (max-width: 800px) {
+    .app { padding: 14px 16px; }
+    .slide { overflow-y: auto; align-content: start; }
+    .stage, .stage.multi { display: flex; flex-direction: column; }
+    .clip, .clip.active, .stage.two .clip.active, .stage.multi .clip, .stage.multi .clip.active { height: auto; width: 100%; max-width: 100%; flex: 0 0 auto; aspect-ratio: 16 / 9; grid-column: auto; grid-row: auto; }
+    .loop { display: none; }
+    .pill.live { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .slide, .clip { transition: none; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <img src="media/logo-ink.svg" alt="The Light Company">
+    <span class="sp"></span>
+    <a class="pill live" href="http://127.0.0.1:7301/?rail=1" target="_blank" rel="noopener"><span class="dot"></span>Live station</a>
+    <button class="pill" id="openClicky">About</button>
+    <button class="pill" id="openGallery">All clips</button>
+    <span class="count" id="count"></span>
+  </header>
+  <main id="main"></main>
+  <footer>
+    <div class="loop" id="loop"></div>
+    <div class="dots" id="dots"></div>
+    <div class="nav">
+      <button id="prev" aria-label="Previous slide"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M10 3L5 8l5 5" fill="none" stroke="#1d1d1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+      <button id="next" aria-label="Next slide"><svg width="16" height="16" viewBox="0 0 16 16"><path d="M6 3l5 5-5 5" fill="none" stroke="#1d1d1f" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+    </div>
+  </footer>
+</div>
+
+<div class="gallery" id="gallery">
+  <div class="ghead"><h2>All clips</h2><span style="flex:1"></span><button class="pill" id="closeGallery">Close</button></div>
+  <h3>In the deck</h3>
+  <div class="grid" id="ggrid"></div>
+  <h3>More from the lab</h3>
+  <div class="grid" id="gmore"></div>
+  <h3>About</h3>
+  <div class="grid" id="gclicky"></div>
+</div>
+<div class="clicky" id="clicky">
+  <div class="ghead"><span style="flex:1"></span>
+    <button class="pill" id="closeClicky">Close</button></div>
+  <div class="cwrap"><video id="clickyVideo" playsinline controls preload="none" poster="media/heyclicky-film.jpg" src="media/heyclicky-film.mp4"></video></div>
+</div>
+<div class="light" id="light"><video id="lightVideo" muted playsinline controls></video><img id="lightImg" alt="" hidden><button id="closeLight" aria-label="Close"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M2 2l10 10M12 2L2 12" stroke="#1d1d1f" stroke-width="2" stroke-linecap="round"/></svg></button></div>
+
+<script>
+const REAL = 'Real station', SIM = 'Simulation', UNIT = 'Real unit';
+const LOOP = ['TEST', 'FAIL', 'COLLECT', 'IMPROVE', 'REPEAT'];
+// media/<src>.mp4 + poster media/<src>.jpg; src starting "photo-" is a still (media/<src>.jpg)
+// stage: which words of the loop this slide is about
+const SLIDES = [
+  { title: 'Prism — Eval in a Box', line: 'One station over a workbench. The whole robot evaluation loop.', stage: [0, 1, 2, 3, 4], auto: true,
+    clips: [{ src: 'real-walk', kind: REAL, name: 'Walking the lab' }, { src: 'photo-row', kind: REAL, name: 'A row of stations' }, { src: 'real-lab', kind: REAL, name: 'Station in the lab' }] },
+  { title: 'Projected Grids', line: 'The table becomes a coordinate system anyone can read.', stage: [0],
+    clips: [{ src: 'real-grid', kind: REAL, name: 'Grid with labelled objects' }, { src: 'photo-station3', kind: REAL, name: 'Station 3' }, { src: 'sim-grid', kind: SIM, name: 'Station grid' }] },
+  { title: 'Object Placement', line: 'Light shows where every object goes. Same setup, every trial.', stage: [0],
+    clips: [{ src: 'real-place', kind: REAL, name: 'Staging on the grid' }, { src: 'real-guide', kind: REAL, name: 'Guided onto its target' }, { src: 'sim-place', kind: SIM, name: 'Guided placement' }] },
+  { title: 'Scene Verification', line: 'The camera checks each position before the robot moves.', stage: [0],
+    clips: [{ src: 'real-tracked', kind: REAL, name: 'Every object tracked and labelled' }, { src: 'sim-verify', kind: SIM, name: 'By eye, then on the guides' }] },
+  { title: 'Run an Evaluation', line: 'Verified scene in, scored result out.', stage: [0],
+    clips: [{ src: 'real-run', kind: REAL, name: 'Lights off, robot runs' }, { src: 'sim-run', kind: SIM, name: 'Run and score' }] },
+  { title: 'Find the Failures', line: 'Success by start position, painted on the table.', stage: [1],
+    clips: [{ src: 'sim-failures', kind: SIM, name: 'Coverage sweep' }, { src: 'sim-heatmap', kind: SIM, name: 'Failure maps' }] },
+  { title: 'Collect More Data', line: 'Teleoperate on the same station, right where the model failed.', stage: [2],
+    clips: [{ src: 'real-teleop', kind: REAL, name: 'Teleoperation' }, { src: 'real-control', kind: REAL, name: 'At the station' }] },
+  { title: 'Improve and Retest', line: 'The weakest cell goes straight back into the loop.', stage: [3, 4],
+    clips: [{ src: 'sim-retest', kind: SIM, name: 'Weakest cell, retested' }] },
+  { title: 'Customer Deployments', line: 'Packed in a case, mounted over a bench, running in robotics labs.', stage: [0, 1, 2, 3, 4],
+    clips: [{ src: 'photo-handoff', kind: UNIT, name: 'Shipping a unit' }, { src: 'photo-case', kind: UNIT, name: 'Ships in a case' }, { src: 'photo-people', kind: REAL, name: 'Labs at the stations' }, { src: 'real-station3', kind: REAL, name: 'Station 3' }, { src: 'real-trial', kind: REAL, name: 'A full trial' }] },
+  { title: 'The Complete System', line: 'Projector, camera, calibration, scoring. One box.', stage: [0, 1, 2, 3, 4],
+    clips: [{ src: 'photo-unit', kind: UNIT, name: 'The unit' }, { src: 'photo-unit-front', kind: UNIT, name: 'Projector and camera' }, { src: 'sim-system', kind: SIM, name: 'The whole station' }, { src: 'sim-calibration', kind: SIM, name: 'Self-calibration' }] },
+];
+// gallery only
+const MORE = [
+  { src: 'real-arrows', kind: REAL, name: 'Task paths projected' },
+  { src: 'real-labels', kind: REAL, name: 'Objects labelled on the grid' },
+  { src: 'real-placing', kind: REAL, name: 'Placing objects on Station 3' },
+  { src: 'real-zones', kind: REAL, name: 'Projected test zones' },
+  { src: 'real-towel', kind: REAL, name: 'Staging a cloth task' },
+  { src: 'real-cup', kind: REAL, name: 'Cup task staged' },
+  { src: 'photo-arms', kind: REAL, name: 'Arms over the grid' },
+  { src: 'photo-row-night', kind: REAL, name: 'Stations after hours' },
+  { src: 'photo-bench', kind: REAL, name: 'The lab' },
+  { src: 'photo-visitors', kind: REAL, name: 'Visitors at the stations' },
+  { src: 'photo-rack', kind: REAL, name: 'Objects on the grid' },
+  { src: 'photo-marker', kind: REAL, name: 'Target marker' },
+  { src: 'photo-bare', kind: REAL, name: 'A bench before projection' },
+  { src: 'photo-tablet', kind: REAL, name: 'Setting up a station' },
+  { src: 'photo-onsite', kind: REAL, name: 'On site' },
+  { src: 'photo-case-hand', kind: UNIT, name: 'Unit in its case' },
+  { src: 'photo-unit-side', kind: UNIT, name: 'The unit, side' },
+  { src: 'photo-proto', kind: UNIT, name: 'Earlier prototypes' },
+];
+
+const $ = (s, r = document) => r.querySelector(s);
+const isPhoto = (src) => src.startsWith('photo-');
+const main = $('#main');
+const PLAY = '<span><svg width="26" height="26" viewBox="0 0 26 26"><path d="M7 4l15 9-15 9z" fill="#1d1d1f"/></svg></span>';
+const EXP = '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M8 2h4v4M6 12H2V8M12 2L8 6M2 12l4-4" fill="none" stroke="#1d1d1f" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const tagClass = (k) => (k === SIM ? 'sim' : k === UNIT ? 'unit' : '');
+
+SLIDES.forEach((s, i) => {
+  const el = document.createElement('section');
+  el.className = 'slide';
+  const n = s.clips.length;
+  const cls = n > 2 ? 'multi' : n === 2 ? 'two' : '';
+  const rows = n > 2 ? ` style="grid-template-rows: repeat(${n - 1}, minmax(0, 1fr))"` : '';
+  el.innerHTML = `<div class="head"><span class="num">${String(i + 1).padStart(2, '0')}</span><h1>${s.title}</h1><span class="line">${s.line}</span></div>
+    <div class="stage ${cls}"${rows}>${s.clips.map((c, k) => `
+      <div class="clip ${k === 0 ? 'active' : ''}" data-src="${c.src}">
+        ${isPhoto(c.src)
+          ? `<img class="media" src="media/${c.src}.jpg" alt="${c.name}">`
+          : `<video muted playsinline loop preload="none" poster="media/${c.src}.jpg" data-src="media/${c.src}.mp4"></video>`}
+        <span class="tag ${tagClass(c.kind)}">${c.kind}</span>
+        <button class="expand" aria-label="Full screen">${EXP}</button>
+        ${isPhoto(c.src) ? '' : `<div class="play">${PLAY}</div><div class="bar"><i></i></div>`}
+      </div>`).join('')}</div>`;
+  main.appendChild(el);
+});
+
+// size the active card to exactly fit its media (no letterbox bars)
+const narrow = matchMedia('(max-width: 800px)');
+function fit(stage) {
+  const a = stage.querySelector('.clip.active');
+  stage.querySelectorAll('.clip').forEach((c) => { if (c !== a) { c.classList.remove('fit'); c.style.width = c.style.height = ''; } });
+  if (!a) return;
+  if (narrow.matches) { a.classList.remove('fit'); a.style.width = a.style.height = ''; return; }
+  const n = stage.children.length, ar = a._ar || 16 / 9;
+  const W = n > 2 ? stage.clientWidth * 0.79 - 12 : n === 2 ? stage.clientWidth * 0.74 : stage.clientWidth;
+  const w = Math.min(W, stage.clientHeight * ar);
+  a.classList.add('fit'); a.style.width = w + 'px'; a.style.height = w / ar + 'px';
+}
+const fitAll = () => document.querySelectorAll('.stage').forEach(fit);
+addEventListener('resize', fitAll);
+document.querySelectorAll('.clip').forEach((clip) => {
+  const im = new Image();
+  im.onload = () => { clip._ar = im.naturalWidth / im.naturalHeight; clip.style.setProperty('--ar', `${im.naturalWidth} / ${im.naturalHeight}`); fit(clip.parentElement); };
+  im.src = `media/${clip.dataset.src}.jpg`;
+});
+
+const slides = [...document.querySelectorAll('.slide')];
+let cur = 0;
+const load = (v) => { if (!v.src) v.src = v.dataset.src; };
+const stopAll = () => document.querySelectorAll('.clip video').forEach((v) => { v.pause(); v.closest('.clip').classList.remove('playing'); });
+const setActive = (clip) => { clip.parentElement.querySelectorAll('.clip').forEach((c) => c.classList.toggle('active', c === clip)); fit(clip.parentElement); };
+function playClip(clip) {
+  const v = $('video', clip);
+  const was = v && !v.paused;
+  stopAll();
+  setActive(clip);
+  if (!v || was) return;
+  load(v);
+  v.play().then(() => clip.classList.add('playing')).catch(() => {});
+}
+document.querySelectorAll('.clip').forEach((clip) => {
+  const v = $('video', clip);
+  clip.addEventListener('click', (e) => {
+    if (e.target.closest('.expand')) return openLight(clip.dataset.src);
+    if (!v && clip.classList.contains('active')) return openLight(clip.dataset.src);
+    playClip(clip);
+  });
+  if (v) v.addEventListener('timeupdate', () => { $('.bar i', clip).style.width = (v.currentTime / (v.duration || 1)) * 100 + '%'; });
+});
+
+function go(n) {
+  n = Math.max(0, Math.min(SLIDES.length - 1, n));
+  stopAll();
+  slides.forEach((s, i) => { s.classList.toggle('on', i === n); s.classList.toggle('left', i < n); });
+  cur = n;
+  $('#count').textContent = `${n + 1} / ${SLIDES.length}`;
+  $('#loop').innerHTML = LOOP.map((w, i) => `<b class="${SLIDES[n].stage.includes(i) ? 'on' : ''}">${w}</b>`).join('<i>→</i>');
+  [...$('#dots').children].forEach((d, i) => d.classList.toggle('on', i === n));
+  $('#prev').disabled = n === 0; $('#next').disabled = n === SLIDES.length - 1;
+  slides[n].querySelectorAll('video').forEach(load);
+  if (SLIDES[n].auto) playClip($('.clip', slides[n]));
+  history.replaceState(null, '', '#' + (n + 1));
+}
+SLIDES.forEach((_, i) => { const b = document.createElement('button'); b.setAttribute('aria-label', 'Slide ' + (i + 1)); b.onclick = () => go(i); $('#dots').appendChild(b); });
+$('#prev').onclick = () => go(cur - 1); $('#next').onclick = () => go(cur + 1);
+
+// gallery
+const VB = '<span class="vb"><svg width="12" height="12" viewBox="0 0 26 26"><path d="M7 4l15 9-15 9z" fill="#1d1d1f"/></svg></span>';
+const card = (c, sub, onclick) => {
+  const b = document.createElement('button'); b.className = 'card';
+  b.innerHTML = `<img src="media/${c.src}.jpg" alt="" loading="lazy">${isPhoto(c.src) ? '' : VB}<div>${c.name}<small>${sub}</small></div>`;
+  b.onclick = onclick;
+  return b;
+};
+const seen = new Set();
+SLIDES.forEach((s, i) => s.clips.forEach((c) => {
+  if (seen.has(c.src)) return; seen.add(c.src);
+  $('#ggrid').appendChild(card(c, `${c.kind} · ${s.title}`, () => { gallery(false); go(i); playClip(slides[i].querySelector(`.clip[data-src="${c.src}"]`)); }));
+}));
+MORE.forEach((c) => $('#gmore').appendChild(card(c, c.kind, () => openLight(c.src))));
+$('#gclicky').appendChild(card({ src: 'heyclicky-film', name: 'The HeyClicky film' }, 'Before The Light Company', () => { gallery(false); clicky(true); }));
+const gallery = (on) => { $('#gallery').classList.toggle('on', on); if (on) stopAll(); };
+$('#openGallery').onclick = () => gallery(true); $('#closeGallery').onclick = () => gallery(false);
+
+// HeyClicky
+const cv = $('#clickyVideo');
+const clicky = (on) => { $('#clicky').classList.toggle('on', on); if (on) stopAll(); else cv.pause(); };
+$('#openClicky').onclick = () => clicky(true); $('#closeClicky').onclick = () => clicky(false);
+
+// full screen
+const lv = $('#lightVideo'), li = $('#lightImg');
+function openLight(src) {
+  stopAll();
+  const photo = isPhoto(src);
+  lv.hidden = photo; li.hidden = !photo;
+  if (photo) { lv.pause(); lv.removeAttribute('src'); li.src = `media/${src}.jpg`; }
+  else { lv.src = `media/${src}.mp4`; lv.play().catch(() => {}); }
+  $('#light').classList.add('on');
+}
+function closeLight() { lv.pause(); $('#light').classList.remove('on'); }
+$('#closeLight').onclick = closeLight;
+
+addEventListener('keydown', (e) => {
+  if (e.metaKey || e.ctrlKey) return;
+  const k = e.key;
+  if (k === 'Escape') { if ($('#light').classList.contains('on')) closeLight(); else if ($('#clicky').classList.contains('on')) clicky(false); else gallery(false); return; }
+  if ($('#light').classList.contains('on')) return;
+  if ($('#clicky').classList.contains('on')) { if (k === 'h' || k === 'H') clicky(false); return; }
+  if ((k === 'h' || k === 'H') && !$('#gallery').classList.contains('on')) return clicky(true);
+  if (k === 'g' || k === 'G') return gallery(!$('#gallery').classList.contains('on'));
+  if ($('#gallery').classList.contains('on')) return;
+  if (k === 'ArrowRight' || k === 'PageDown') go(cur + 1);
+  else if (k === 'ArrowLeft' || k === 'PageUp') go(cur - 1);
+  else if (k === ' ' || k === 'Enter') { e.preventDefault(); playClip($('.clip.active', slides[cur]) || $('.clip', slides[cur])); }
+  else if (k === 'Tab') { e.preventDefault(); const cs = [...slides[cur].querySelectorAll('.clip')]; const a = cs.findIndex((c) => c.classList.contains('active')); playClip(cs[(a + 1) % cs.length]); }
+  else if (k === 'f' || k === 'F') openLight(($('.clip.active', slides[cur]) || $('.clip', slides[cur])).dataset.src);
+  else if (/^[0-9]$/.test(k)) go(k === '0' ? 9 : +k - 1);
+});
+let tx = null;
+addEventListener('touchstart', (e) => { tx = e.touches[0].clientX; }, { passive: true });
+addEventListener('touchend', (e) => { if (tx === null) return; const dx = e.changedTouches[0].clientX - tx; tx = null; if (Math.abs(dx) > 60) go(cur + (dx < 0 ? 1 : -1)); }, { passive: true });
+
+if (!/^(127\.0\.0\.1|localhost)$/.test(location.hostname)) document.querySelector('.pill.live').href = 'https://jonnysol.github.io/prism-sim-demo/';
+go(Math.max(0, (parseInt(location.hash.slice(1)) || 1) - 1));
+</script>
+</body>
+</html>
